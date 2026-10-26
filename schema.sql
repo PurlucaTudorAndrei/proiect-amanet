@@ -1,5 +1,5 @@
 -- Schema Bazei de Date: Sistem Gestiune Casa de Amanet
--- SGBD: PostgreSQL 18
+-- SGBD: SupaBase(PostgreSQL)
 
 DROP TABLE IF EXISTS detalii_comenzi CASCADE;
 DROP TABLE IF EXISTS comenzi_vanzare CASCADE;
