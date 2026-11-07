@@ -1,9 +1,20 @@
-const pool = require('./db');
+require('dotenv').config({ path: '.env.local' });
+require('dotenv').config({ path: '.env' });
+const { Pool } = require('pg');
+
+const connString = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/amanet_db';
+const requiresSsl = connString.includes('sslmode=require') || connString.includes('.neon.tech') || connString.includes('supabase');
+
+const pool = new Pool({
+  connectionString: connString,
+  ...(requiresSsl ? { ssl: { rejectUnauthorized: false } } : {}),
+});
 
 async function runFixtures() {
-  const client = await pool.connect();
+  let client;
   try {
-    console.log('[Fixtures] Conectat la baza de date din cloud...');
+    client = await pool.connect();
+    console.log('[Fixtures] Conectat cu succes la baza de date...');
     await client.query('BEGIN');
 
     // Resetare date existente si secvente de ID-uri (AUTO_INCREMENT)
@@ -108,14 +119,19 @@ async function runFixtures() {
     await client.query(detaliiQuery);
 
     await client.query('COMMIT');
-    console.log('✓ [Fixtures] Toate tabelele (inclusiv comenzi_vanzare si detalii_comenzi) au fost populate cu succes!');
+    console.log('✓ [Fixtures] Toate tabelele au fost populate cu succes!');
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (client) await client.query('ROLLBACK');
     console.error('[Fixtures] Eroare la inserarea datelor:', error);
   } finally {
-    client.release();
+    if (client) client.release();
     await pool.end();
   }
 }
 
 runFixtures();
+
+//Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+//npm run dev
+//Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+//npm run seed
