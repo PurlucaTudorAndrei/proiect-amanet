@@ -1,6 +1,7 @@
 require('dotenv').config({ path: '.env.local' });
 require('dotenv').config({ path: '.env' });
 const { Pool } = require('pg');
+const bcrypt = require('bcryptjs');
 
 const connString = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/amanet_db';
 const requiresSsl = connString.includes('sslmode=require') || connString.includes('.neon.tech') || connString.includes('supabase');
@@ -17,7 +18,7 @@ async function runFixtures() {
     console.log('[Fixtures] Conectat cu succes la baza de date...');
     await client.query('BEGIN');
 
-    // Resetare date existente si secvente de ID-uri (AUTO_INCREMENT)
+    // Resetare date existente si secvente de ID-uri
     console.log('[Fixtures] Curatare tabele existente...');
     await client.query(`
       TRUNCATE TABLE 
@@ -31,18 +32,21 @@ async function runFixtures() {
       RESTART IDENTITY CASCADE;
     `);
 
-    // 1. Inserare Utilizatori
+    // Generare hash real pentru parola de test "123456"
+    const parolaHash = await bcrypt.hash('123456', 10);
+
+    // 1. Inserare Utilizatori cu cele 3 roluri (ADMIN, OPERATOR, CLIENT)
     console.log('[Fixtures] Inserare utilizatori...');
     const usersQuery = `
       INSERT INTO utilizatori (nume_complet, email, parola_hash, telefon, cnp, seria_nr_ci, rol)
       VALUES 
-        ('Admin Amanet', 'admin@amanet.ro', '$2b$10$w09ZkZlG7j8sV...mockadmin', '0700000001', '1900101123456', 'GL111111', 'ADMIN'),
-        ('Ion Operator', 'operator1@amanet.ro', '$2b$10$w09ZkZlG7j8sV...mockop', '0700000002', '1920202123456', 'GL222222', 'OPERATOR'),
-        ('Vasile Popescu', 'vasile.p@yahoo.com', '$2b$10$w09ZkZlG7j8sV...mockclient', '0740111222', '1850303123456', 'GL333333', 'CLIENT'),
-        ('Maria Ionescu', 'maria.ionescu@gmail.com', '$2b$10$w09ZkZlG7j8sV...mockclient2', '0750333444', '2900404123456', 'GL444444', 'CLIENT')
+        ('Admin Amanet', 'admin@amanet.ro', $1, '0700000001', '1900101123456', 'GL111111', 'ADMIN'),
+        ('Ion Operator', 'operator1@amanet.ro', $1, '0700000002', '1920202123456', 'GL222222', 'OPERATOR'),
+        ('Vasile Popescu', 'vasile.p@yahoo.com', $1, '0740111222', '1850303123456', 'GL333333', 'CLIENT'),
+        ('Maria Ionescu', 'maria.ionescu@gmail.com', $1, '0750333444', '2900404123456', 'GL444444', 'CLIENT')
       RETURNING id_utilizator, rol, nume_complet;
     `;
-    const usersRes = await client.query(usersQuery);
+    const usersRes = await client.query(usersQuery, [parolaHash]);
     const opId = usersRes.rows.find(u => u.rol === 'OPERATOR').id_utilizator;
     const client1Id = usersRes.rows.find(u => u.nume_complet === 'Vasile Popescu').id_utilizator;
     const client2Id = usersRes.rows.find(u => u.nume_complet === 'Maria Ionescu').id_utilizator;
@@ -91,35 +95,29 @@ async function runFixtures() {
 
     // 5. Inserare Plati Contracte
     console.log('[Fixtures] Inserare plati...');
-    const platiQuery = `
+    await client.query(`
       INSERT INTO plati_contracte (id_contract, id_operator, tip_plata, suma_platita, metoda_plata)
-      VALUES 
-        (${contract1Id}, ${opId}, 'PLATA_COMISION', 60.00, 'NUMERAR');
-    `;
-    await client.query(platiQuery);
+      VALUES (${contract1Id}, ${opId}, 'PLATA_COMISION', 60.00, 'NUMERAR');
+    `);
 
     // 6. Inserare Comanda Magazin
     console.log('[Fixtures] Inserare comenzi vanzare...');
-    const comandaQuery = `
+    const comandaRes = await client.query(`
       INSERT INTO comenzi_vanzare (id_client_cumparator, data_comanda, total_comanda, status_comanda)
-      VALUES 
-        (${client1Id}, CURRENT_TIMESTAMP - INTERVAL '2 days', 750.00, 'ACHITATA')
+      VALUES (${client1Id}, CURRENT_TIMESTAMP - INTERVAL '2 days', 750.00, 'ACHITATA')
       RETURNING id_comanda;
-    `;
-    const comandaRes = await client.query(comandaQuery);
+    `);
     const comandaId = comandaRes.rows[0].id_comanda;
 
     // 7. Inserare Detalii Comanda
     console.log('[Fixtures] Inserare detalii comanda...');
-    const detaliiQuery = `
+    await client.query(`
       INSERT INTO detalii_comenzi (id_comanda, id_obiect, pret_final)
-      VALUES 
-        (${comandaId}, ${objCastiVanduteId}, 750.00);
-    `;
-    await client.query(detaliiQuery);
+      VALUES (${comandaId}, ${objCastiVanduteId}, 750.00);
+    `);
 
     await client.query('COMMIT');
-    console.log('✓ [Fixtures] Toate tabelele au fost populate cu succes!');
+    console.log('✓ [Fixtures] Toate tabelele au fost populate cu succes! (Parola conturi: 123456)');
   } catch (error) {
     if (client) await client.query('ROLLBACK');
     console.error('[Fixtures] Eroare la inserarea datelor:', error);

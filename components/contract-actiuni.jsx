@@ -9,8 +9,9 @@ import {
   stergeContractAction,
 } from '@/app/contracte/actions';
 
-export default function ContractActiuni({ contract }) {
+export default function ContractActiuni({ contract, rol }) {
   const [isPending, startTransition] = useTransition();
+
   const isActiv = contract.status_contract === 'ACTIV' || contract.status_contract === 'PRELUNGIT';
   const isDepasit = contract.zile_ramase < 0 && isActiv;
 
@@ -18,7 +19,6 @@ export default function ContractActiuni({ contract }) {
     <div className="flex items-center gap-1.5 justify-end whitespace-nowrap">
       {isActiv ? (
         <>
-          {/* Buton Prelungire */}
           <Button
             size="sm"
             variant="outline"
@@ -33,7 +33,6 @@ export default function ContractActiuni({ contract }) {
             +30 Zile
           </Button>
 
-          {/* Buton Răscumpărare */}
           <Button
             size="sm"
             variant="outline"
@@ -48,7 +47,6 @@ export default function ContractActiuni({ contract }) {
             Răscumpără
           </Button>
 
-          {/* Buton Confiscare pentru depășite */}
           {isDepasit && (
             <Button
               size="sm"
@@ -74,21 +72,29 @@ export default function ContractActiuni({ contract }) {
         <span className="text-xs text-muted-foreground italic pr-1">Finalizat</span>
       )}
 
-      {/* OPERAȚIE CRUD: DELETE CONTRACT */}
-      <Button
-        size="sm"
-        variant="ghost"
-        disabled={isPending}
-        className="h-7 px-2 text-xs text-rose-400 hover:bg-rose-500/10 hover:text-rose-300"
-        title="Șterge contractul din baza de date"
-        onClick={() => {
-          if (confirm(`Sigur dorești să ȘTERGI definitiv contractul ${contract.numar_contract}? Operațiunea este ireversibilă.`)) {
-            startTransition(() => stergeContractAction(contract.id_contract));
-          }
-        }}
-      >
-        Șterge
-      </Button>
+      {/* Buton vizibil STRICT pentru ADMIN */}
+      {rol === 'ADMIN' && (
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={isPending}
+          className="h-7 px-2 text-xs text-rose-400 hover:bg-rose-500/10 hover:text-rose-300"
+          title="Șterge contractul (Doar ADMIN)"
+          onClick={() => {
+            if (confirm(`Sigur dorești să ȘTERGI definitiv contractul ${contract.numar_contract}?`)) {
+              startTransition(async () => {
+                try {
+                  await stergeContractAction(contract.id_contract);
+                } catch (err) {
+                  alert(err.message);
+                }
+              });
+            }
+          }}
+        >
+          Șterge
+        </Button>
+      )}
     </div>
   );
 }

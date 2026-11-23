@@ -1,108 +1,90 @@
+import { Suspense } from 'react';
 import pool from '@/db';
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { getSession } from '@/lib/auth';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import CumparaProdusDialog from '@/components/cumpara-produs-dialog';
 
-export const instant = false;
+async function VitrinaContent() {
+  const session = await getSession();
 
-export default async function HomePage() {
-  let categorii = [];
-  let produseVanzare = [];
-  let eroare = null;
+  const obiecteRes = await pool.query(`
+    SELECT o.id_obiect, o.titlu, o.descriere_stare, o.serie_identificare, 
+           o.pret_vanzare, c.denumire AS categorie
+    FROM obiecte o
+    JOIN categorii_obiecte c ON o.id_categorie = c.id_categorie
+    WHERE o.stare_obiect = 'EXPUS_VANZARE'
+    ORDER BY o.id_obiect DESC
+  `);
 
-  try {
-    // 1. Categoriile configurate
-    const catRes = await pool.query('SELECT * FROM categorii_obiecte ORDER BY id_categorie ASC');
-    categorii = catRes.rows;
+  const categoriiRes = await pool.query(`
+    SELECT id_categorie, denumire, comision_zilnic_procent, descriere
+    FROM categorii_obiecte
+    ORDER BY id_categorie ASC
+  `);
 
-    // 2. Bunurile confiscate expuse la vânzare
-    const prodRes = await pool.query(`
-      SELECT 
-        o.id_obiect,
-        o.titlu,
-        o.serie_identificare,
-        o.valoare_evaluata,
-        o.pret_vanzare,
-        cat.denumire AS categorie
-      FROM obiecte o
-      JOIN categorii_obiecte cat ON o.id_categorie = cat.id_categorie
-      WHERE o.stare_obiect = 'EXPUS_VANZARE'
-      ORDER BY o.id_obiect DESC
-    `);
-    produseVanzare = prodRes.rows;
-  } catch (err) {
-    eroare = err.message;
-  }
+  const produse = obiecteRes.rows;
+  const categorii = categoriiRes.rows;
 
   return (
-    <div className="space-y-12">
+    <div className="space-y-10">
       {/* Header Vitrină */}
       <div className="border-b border-border pb-6">
-        <h1 className="text-3xl font-bold tracking-tight text-amber-500">
-          Vitrină Vânzări & Servicii Amanet
+        <h1 className="text-3xl font-bold tracking-tight text-amber-400">
+          Vitrină Vânzări &amp; Servicii Amanet
         </h1>
-        <p className="text-muted-foreground mt-1 text-sm">
+        <p className="text-sm text-muted-foreground mt-1">
           Bunuri verificate cu garanție, provenite din contracte nepreluate, disponibile la preț de lichidare.
         </p>
       </div>
 
-      {eroare && (
-        <div className="p-4 bg-destructive/10 border border-destructive rounded-lg text-destructive">
-          <p className="font-semibold">Eroare încărcare date:</p>
-          <p className="text-sm font-mono mt-1">{eroare}</p>
-        </div>
-      )}
-
-      {/* Secțiunea 1: Produse în Vitrină (Magazin) */}
+      {/* Produse Disponibile */}
       <section className="space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold tracking-tight">
-            Produse Disponibile la Vânzare ({produseVanzare.length})
+          <h2 className="text-xl font-semibold text-foreground">
+            Produse Disponibile la Vânzare ({produse.length})
           </h2>
-          <Badge variant="outline" className="text-emerald-400 border-emerald-500/30">
+          <Badge variant="outline" className="border-emerald-500/40 text-emerald-400">
             Stoc Magazin
           </Badge>
         </div>
 
-        {produseVanzare.length === 0 ? (
-          <div className="p-8 text-center border border-dashed border-border rounded-xl text-muted-foreground text-sm">
-            Momentan nu există produse confiscate expuse la vânzare.
-            <br />
-            (Folosește acțiunea <strong>Confiscă</strong> din pagina de Contracte pe un contract depășit pentru a adăuga un produs aici).
-          </div>
+        {produse.length === 0 ? (
+          <Card className="border-border bg-card">
+            <CardContent className="py-10 text-center text-sm text-muted-foreground">
+              Momentan nu sunt bunuri expuse la vânzare în vitrină.
+            </CardContent>
+          </Card>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {produseVanzare.map((p) => (
-              <Card key={p.id_obiect} className="flex flex-col justify-between hover:border-amber-500/50 transition">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {produse.map((produs) => (
+              <Card key={produs.id_obiect} className="border-border bg-card flex flex-col justify-between">
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between gap-2">
-                    <CardTitle className="text-base font-semibold">{p.titlu}</CardTitle>
-                    <Badge variant="secondary" className="text-xs">
-                      {p.categorie}
+                    <CardTitle className="text-lg text-foreground">{produs.titlu}</CardTitle>
+                    <Badge variant="secondary" className="shrink-0">
+                      {produs.categorie}
                     </Badge>
                   </div>
-                  <span className="text-xs font-mono text-muted-foreground">
-                    Cod: {p.serie_identificare || `#${p.id_obiect}`}
-                  </span>
+                  <p className="text-xs font-mono text-muted-foreground">
+                    Cod: {produs.serie_identificare}
+                  </p>
                 </CardHeader>
 
-                <CardContent className="space-y-2">
-                  <div className="flex justify-between items-baseline">
-                    <span className="text-xs text-muted-foreground">Evaluare inițială:</span>
-                    <span className="text-xs line-through text-muted-foreground">
-                      {parseFloat(p.valoare_evaluata).toLocaleString('ro-RO')} RON
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-baseline pt-1 border-t border-border">
-                    <span className="text-sm font-medium">Preț Vânzare:</span>
-                    <span className="text-2xl font-bold text-amber-500">
-                      {parseFloat(p.pret_vanzare).toLocaleString('ro-RO')} RON
+                <CardContent className="space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    Stare: <span className="text-foreground">{produs.descriere_stare || 'Verificat tehnic, funcțional'}</span>
+                  </p>
+                  <div className="pt-2 border-t border-border flex items-baseline justify-between">
+                    <span className="text-xs text-muted-foreground">Preț Vânzare:</span>
+                    <span className="text-2xl font-bold text-amber-400">
+                      {parseFloat(produs.pret_vanzare).toLocaleString('ro-RO')} RON
                     </span>
                   </div>
                 </CardContent>
 
-                <CardFooter className="pt-2">
-                  <CumparaProdusDialog produs={p} />
+                <CardFooter>
+                  <CumparaProdusDialog produs={produs} session={session} />
                 </CardFooter>
               </Card>
             ))}
@@ -110,27 +92,21 @@ export default async function HomePage() {
         )}
       </section>
 
-      {/* Secțiunea 2: Categoriile de bunuri acceptate */}
-      <section className="space-y-4 pt-4 border-t border-border">
-        <h2 className="text-xl font-bold tracking-tight">Condiții & Categorii Evaluare</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      {/* Condiții & Categorii */}
+      <section className="space-y-4">
+        <h2 className="text-xl font-semibold text-foreground">Condiții &amp; Categorii Evaluare</h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {categorii.map((cat) => (
-            <Card key={cat.id_categorie} className="bg-card/50">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base">{cat.denumire}</CardTitle>
-                  <span className="text-xs font-mono text-muted-foreground">ID #{cat.id_categorie}</span>
-                </div>
+            <Card key={cat.id_categorie} className="border-border bg-card">
+              <CardHeader className="pb-2 flex flex-row items-center justify-between">
+                <CardTitle className="text-base text-foreground">{cat.denumire}</CardTitle>
+                <span className="text-xs font-mono text-muted-foreground">ID #{cat.id_categorie}</span>
               </CardHeader>
-              <CardContent className="space-y-2">
-                <p className="text-xs text-muted-foreground">
-                  {cat.descriere || 'Evaluare rapidă pe loc pe baza valorii pieței.'}
-                </p>
+              <CardContent className="space-y-3">
+                <p className="text-xs text-muted-foreground">{cat.descriere}</p>
                 <div className="pt-2 border-t border-border flex items-center justify-between text-xs">
                   <span className="text-muted-foreground">Comision zilnic:</span>
-                  <span className="font-bold text-amber-500">
-                    {cat.comision_zilnic_procent}% / zi
-                  </span>
+                  <span className="font-semibold text-amber-400">{cat.comision_zilnic_procent}% / zi</span>
                 </div>
               </CardContent>
             </Card>
@@ -138,5 +114,13 @@ export default async function HomePage() {
         </div>
       </section>
     </div>
+  );
+}
+
+export default function HomePage() {
+  return (
+    <Suspense fallback={<div className="py-10 text-sm text-muted-foreground">Se încarcă vitrina...</div>}>
+      <VitrinaContent />
+    </Suspense>
   );
 }

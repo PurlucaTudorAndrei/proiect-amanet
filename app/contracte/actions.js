@@ -2,8 +2,19 @@
 
 import pool from '@/db';
 import { revalidatePath } from 'next/cache';
+import { getSession } from '@/lib/auth';
+
+async function verificaStaff() {
+  const session = await getSession();
+  if (!session || (session.rol !== 'ADMIN' && session.rol !== 'OPERATOR')) {
+    throw new Error('Acces neautorizat. Doar personalul autorizat poate executa această operațiune.');
+  }
+  return session;
+}
 
 export async function adaugaContractAction(formData) {
+  const session = await verificaStaff();
+
   const numeClient = formData.get('numeClient')?.trim();
   const cnpClient = formData.get('cnpClient')?.trim();
   const seriaNrCi = formData.get('seriaNrCi')?.trim() || 'GL 000000';
@@ -20,27 +31,8 @@ export async function adaugaContractAction(formData) {
   try {
     await clientDb.query('BEGIN');
 
-    // 1. Găsește un operator din sistem pentru id_operator
-    const operatorRes = await clientDb.query(`
-      SELECT id_utilizator FROM utilizatori 
-      WHERE rol IN ('OPERATOR', 'ADMIN') 
-      ORDER BY id_utilizator ASC 
-      LIMIT 1
-    `);
-    
-    let idOperator;
-    if (operatorRes.rows.length > 0) {
-      idOperator = operatorRes.rows[0].id_utilizator;
-    } else {
-      const nouOperator = await clientDb.query(`
-        INSERT INTO utilizatori (nume_complet, email, parola_hash, telefon, cnp, seria_nr_ci, rol)
-        VALUES ('Operator Ghișeu', 'operator@amanetpro.ro', 'hash_parola', '0700000000', '1800101999999', 'GL 999999', 'OPERATOR')
-        RETURNING id_utilizator
-      `);
-      idOperator = nouOperator.rows[0].id_utilizator;
-    }
+    const idOperator = session.id_utilizator;
 
-    // 2. Identifică sau creează clientul
     let clientRes = await clientDb.query(
       'SELECT id_utilizator FROM utilizatori WHERE cnp = $1',
       [cnpClient]
@@ -60,7 +52,6 @@ export async function adaugaContractAction(formData) {
       idClient = nouClientRes.rows[0].id_utilizator;
     }
 
-    // 3. Inserează bunul amanetat
     const serieIdentificare = `SER-${Date.now().toString().slice(-6)}`;
     const obiectRes = await clientDb.query(
       `INSERT INTO obiecte 
@@ -71,12 +62,10 @@ export async function adaugaContractAction(formData) {
     );
     const idObiect = obiectRes.rows[0].id_obiect;
 
-    // 4. Generează numărul de contract unic
     const countRes = await clientDb.query('SELECT COUNT(*) FROM contracte_amanet');
     const index = parseInt(countRes.rows[0].count, 10) + 1;
     const numarContract = `CTR-2026-${String(index).padStart(3, '0')}`;
 
-    // 5. Inserează contractul
     await clientDb.query(
       `INSERT INTO contracte_amanet 
        (numar_contract, id_client, id_operator, id_obiect, suma_imprumutata, comision_zilnic, data_inceput, data_scadenta, status_contract)
@@ -98,23 +87,25 @@ export async function adaugaContractAction(formData) {
 }
 
 export async function prelungesteContractAction(idContract, zile = 30) {
+  const session = await verificaStaff();
+
   const clientDb = await pool.connect();
   try {
     await clientDb.query('BEGIN');
 
     const cRes = await clientDb.query(
-      'SELECT id_operator, suma_imprumutata, comision_zilnic FROM contracte_amanet WHERE id_contract = $1',
+      'SELECT suma_imprumutata, comision_zilnic FROM contracte_amanet WHERE id_contract = $1',
       [idContract]
     );
     if (cRes.rows.length === 0) throw new Error('Contract inexistent.');
 
-    const { id_operator, suma_imprumutata, comision_zilnic } = cRes.rows[0];
+    const { suma_imprumutata, comision_zilnic } = cRes.rows[0];
     const comisionDePlata = (parseFloat(suma_imprumutata) * (parseFloat(comision_zilnic) / 100) * zile).toFixed(2);
 
     await clientDb.query(
       `INSERT INTO plati_contracte (id_contract, id_operator, tip_plata, suma_platita, metoda_plata)
        VALUES ($1, $2, 'PLATA_COMISION', $3, 'NUMERAR')`,
-      [idContract, id_operator, comisionDePlata]
+      [idContract, session.id_utilizator, comisionDePlata]
     );
 
     await clientDb.query(
@@ -138,22 +129,24 @@ export async function prelungesteContractAction(idContract, zile = 30) {
 }
 
 export async function finalizeazaRascumparareAction(idContract) {
+  const session = await verificaStaff();
+
   const clientDb = await pool.connect();
   try {
     await clientDb.query('BEGIN');
 
     const cRes = await clientDb.query(
-      'SELECT id_obiect, id_operator, suma_imprumutata FROM contracte_amanet WHERE id_contract = $1',
+      'SELECT id_obiect, suma_imprumutata FROM contracte_amanet WHERE id_contract = $1',
       [idContract]
     );
     if (cRes.rows.length === 0) throw new Error('Contract inexistent.');
 
-    const { id_obiect, id_operator, suma_imprumutata } = cRes.rows[0];
+    const { id_obiect, suma_imprumutata } = cRes.rows[0];
 
     await clientDb.query(
       `INSERT INTO plati_contracte (id_contract, id_operator, tip_plata, suma_platita, metoda_plata)
        VALUES ($1, $2, 'ACHITARE_RASCUMPARARE', $3, 'NUMERAR')`,
-      [idContract, id_operator, suma_imprumutata]
+      [idContract, session.id_utilizator, suma_imprumutata]
     );
 
     await clientDb.query(
@@ -178,6 +171,8 @@ export async function finalizeazaRascumparareAction(idContract) {
 }
 
 export async function trimiteInVitrinaAction(idContract, pretVanzare) {
+  await verificaStaff();
+
   const clientDb = await pool.connect();
   try {
     await clientDb.query('BEGIN');
@@ -215,7 +210,13 @@ export async function trimiteInVitrinaAction(idContract, pretVanzare) {
   revalidatePath('/');
 }
 
+// DOAR ROLUL ADMIN POATE ȘTERGE DEFINITIV UN CONTRACT
 export async function stergeContractAction(idContract) {
+  const session = await getSession();
+  if (!session || session.rol !== 'ADMIN') {
+    throw new Error('Permisiune refuzată: doar rolul ADMIN poate șterge contracte.');
+  }
+
   const clientDb = await pool.connect();
   try {
     await clientDb.query('BEGIN');
